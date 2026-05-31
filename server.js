@@ -10,6 +10,7 @@ const path = require('path');
 const nodemailer = require('nodemailer');
 const { getDb, initDb } = require('./database');
 const { runScraperForOffer } = require('./scraper');
+const crypto = require('crypto');
 require('./cron'); // Initialize cron jobs
 
 let transporter;
@@ -132,6 +133,61 @@ app.post('/api/login', async (req, res) => {
 
     const token = jwt.sign({ id: user.id, username: user.username, is_admin: user.is_admin === 1 }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin === 1, has_seen_onboarding: user.has_seen_onboarding } });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Password Reset
+app.post('/api/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+
+  try {
+    const db = await getDb();
+    const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 3600000).toISOString(); // 1 hour
+    
+    await db.run('INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?)', [email, token, expiresAt]);
+
+    const resetLink = `https://iatradeflow.com/reset-password?token=${token}`;
+
+    if (transporter) {
+      const info = await transporter.sendMail({
+        from: '"OfferTrack" <noreply@offertrack.com>',
+        to: email,
+        subject: "Redefinição de Senha - OfferTrack",
+        text: `Você solicitou a redefinição da sua senha.\nClique no link abaixo para criar uma nova senha:\n${resetLink}\nSe não foi você, ignore este e-mail.`,
+        html: `<h3>Redefinição de Senha</h3><p>Você solicitou a redefinição da sua senha.</p><p><a href="${resetLink}">Clique aqui para criar uma nova senha</a></p><p>Se não foi você, ignore este e-mail.</p>`
+      });
+      console.log('E-mail de recuperação enviado. URL de Pré-visualização: %s', nodemailer.getTestMessageUrl(info));
+    }
+
+    res.json({ message: 'Se o e-mail estiver cadastrado, você receberá um link de recuperação.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+  if (!token || !newPassword) return res.status(400).json({ error: 'Missing token or password' });
+
+  try {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    
+    const resetRecord = await db.get('SELECT * FROM password_resets WHERE token = ? AND used = 0 AND expires_at > ?', [token, now]);
+    if (!resetRecord) return res.status(400).json({ error: 'Token inválido ou expirado' });
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await db.run('UPDATE users SET password = ? WHERE email = ?', [hashedPassword, resetRecord.email]);
+    await db.run('UPDATE password_resets SET used = 1 WHERE id = ?', [resetRecord.id]);
+
+    res.json({ message: 'Senha atualizada com sucesso!' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
