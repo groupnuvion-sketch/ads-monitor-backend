@@ -365,7 +365,8 @@ app.post('/api/offers', authenticateToken, async (req, res) => {
       [name, url, req.user.id, site_url || null, checkout_url || null, JSON.stringify(tags || []), JSON.stringify(idiomas || [])]
     );
     const newOffer = { id: result.lastID, name, url, user_id: req.user.id };
-    await runScraperForOffer(newOffer).catch(console.error);
+    // Run scraper in the background without blocking response
+    runScraperForOffer(newOffer).catch(console.error);
     res.status(201).json(newOffer);
   } catch (error) {
     res.status(500).json({ error: error.message });
