@@ -523,21 +523,25 @@ app.post('/api/clean-metadata', authenticateToken, upload.single('file'), async 
   }
 });
 
-// --- EXTERNAL CRON ROUTE ---
+// --- EXTERNAL CRON ROUTE (Optional now, but kept for manual triggering) ---
 app.get('/api/cron/run-scraper', async (req, res) => {
-  // Simple auth to prevent abuse
   const authHeader = req.headers.authorization;
   if (authHeader !== `Bearer ${process.env.CRON_SECRET || 'meu-segredo-cron-123'}`) {
     return res.status(401).json({ error: 'Unauthorized cron access' });
   }
 
-  try {
-    // Run asynchronously without blocking the request
-    runDailyScraper();
-    res.json({ message: 'Scraper job started in the background.' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  runDailyScraper().catch(console.error);
+  res.json({ message: 'Daily scraper job started in background' });
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// --- INTERNAL CRON JOB ---
+const cron = require('node-cron');
+// Roda todos os dias à meia-noite (00:00)
+cron.schedule('0 0 * * *', () => {
+  console.log('Internal cron triggered at midnight! Running daily scraper...');
+  runDailyScraper().catch(console.error);
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
