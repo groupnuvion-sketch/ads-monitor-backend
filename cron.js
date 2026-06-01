@@ -1,9 +1,7 @@
-const cron = require('node-cron');
 const { getDb } = require('./database');
 const { runScraperForOffer } = require('./scraper');
 
-// Run every day at midnight
-cron.schedule('0 0 * * *', async () => {
+async function runDailyScraper() {
   console.log('Running daily scraper job...');
   try {
     const db = await getDb();
@@ -16,9 +14,11 @@ cron.schedule('0 0 * * *', async () => {
       await new Promise(res => setTimeout(res, 5000));
     }
     console.log('Daily scraper job completed.');
+    return { success: true, count: offers.length };
   } catch (error) {
     console.error('Error running daily cron job:', error);
+    throw error;
   }
-});
+}
 
-console.log('Cron jobs initialized');
+module.exports = { runDailyScraper };

@@ -4,6 +4,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { exiftool } = require('exiftool-vendored');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 const { OAuth2Client } = require('google-auth-library');
 const fs = require('fs');
 const path = require('path');
@@ -11,28 +14,22 @@ const nodemailer = require('nodemailer');
 const { getDb, initDb } = require('./database');
 const { runScraperForOffer } = require('./scraper');
 const crypto = require('crypto');
-require('./cron'); // Initialize cron jobs
+const { runDailyScraper } = require('./cron');
 
-let transporter;
-nodemailer.createTestAccount((err, account) => {
-  if (err) {
-    console.error('Failed to create a testing account. ' + err.message);
-    return;
+let transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'offertrack.sistema@gmail.com',
+    pass: 'eksopccqoopyoxib'
   }
-  console.log('Ethereal Email account created:', account.user);
-  transporter = nodemailer.createTransport({
-    host: account.smtp.host,
-    port: account.smtp.port,
-    secure: account.smtp.secure,
-    auth: { user: account.user, pass: account.pass }
-  });
 });
+console.log('Nodemailer configured with Gmail.');
 
 async function sendWelcomeEmail(email, username) {
   if (!transporter || !email) return;
   try {
     const info = await transporter.sendMail({
-      from: '"OfferTrack" <welcome@offertrack.saas>',
+      from: '"OfferTrack" <offertrack.sistema@gmail.com>',
       to: email,
       subject: 'Bem-vindo ao OfferTrack! 🚀',
       html: `
@@ -46,7 +43,7 @@ async function sendWelcomeEmail(email, username) {
         </div>
       `
     });
-    console.log('E-mail de Boas Vindas enviado! URL de Pré-visualização: %s', nodemailer.getTestMessageUrl(info));
+    console.log('E-mail de Boas Vindas enviado com sucesso!');
   } catch (err) {
     console.error('Erro ao enviar e-mail:', err);
   }
@@ -58,7 +55,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = 'super-secret-key-for-saas';
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'COLOQUE_SEU_CLIENT_ID_AQUI'; // Placeholder for Google OAuth
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '824603383022-cgbk395jf97m49jpvbncct6lroq3jt3e.apps.googleusercontent.com'; // Google OAuth Client ID
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 const upload = multer({ dest: 'uploads/' });
@@ -103,7 +100,7 @@ app.post('/api/register', async (req, res) => {
 
     if (userId === 1) {
       await db.run('UPDATE users SET user_id = ? WHERE user_id IS NULL', [userId]);
-      await db.run('UPDATE users SET is_admin = 1 WHERE id = 1');
+      await db.run('UPDATE users SET is_admin = TRUE WHERE id = 1');
     }
 
     if (email) sendWelcomeEmail(email, username);
@@ -131,8 +128,8 @@ app.post('/api/login', async (req, res) => {
     const now = new Date().toISOString();
     await db.run('UPDATE users SET last_login = ? WHERE id = ?', [now, user.id]);
 
-    const token = jwt.sign({ id: user.id, username: user.username, is_admin: user.is_admin === 1 }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin === 1, has_seen_onboarding: user.has_seen_onboarding } });
+    const token = jwt.sign({ id: user.id, username: user.username, is_admin: Boolean(user.is_admin) }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: user.id, username: user.username, email: user.email, is_admin: Boolean(user.is_admin), has_seen_onboarding: Boolean(user.has_seen_onboarding) } });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -153,17 +150,17 @@ app.post('/api/forgot-password', async (req, res) => {
     
     await db.run('INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?)', [email, token, expiresAt]);
 
-    const resetLink = `https://iatradeflow.com/reset-password?token=${token}`;
+    const resetLink = `http://localhost:5173/reset-password?token=${token}`;
 
     if (transporter) {
       const info = await transporter.sendMail({
-        from: '"OfferTrack" <noreply@offertrack.com>',
+        from: '"OfferTrack" <offertrack.sistema@gmail.com>',
         to: email,
         subject: "Redefinição de Senha - OfferTrack",
         text: `Você solicitou a redefinição da sua senha.\nClique no link abaixo para criar uma nova senha:\n${resetLink}\nSe não foi você, ignore este e-mail.`,
         html: `<h3>Redefinição de Senha</h3><p>Você solicitou a redefinição da sua senha.</p><p><a href="${resetLink}">Clique aqui para criar uma nova senha</a></p><p>Se não foi você, ignore este e-mail.</p>`
       });
-      console.log('E-mail de recuperação enviado. URL de Pré-visualização: %s', nodemailer.getTestMessageUrl(info));
+      console.log('E-mail de recuperação enviado com sucesso!');
     }
 
     res.json({ message: 'Se o e-mail estiver cadastrado, você receberá um link de recuperação.' });
@@ -214,15 +211,15 @@ app.post('/api/auth/google', async (req, res) => {
       // Create user
       const dummyPassword = await bcrypt.hash(Math.random().toString(36), 10);
       const result = await db.run('INSERT INTO users (username, email, password, last_login) VALUES (?, ?, ?, ?)', [name, email, dummyPassword, now]);
-      user = { id: result.lastID, username: name, email, is_admin: result.lastID === 1 ? 1 : 0, has_seen_onboarding: 0 };
-      if (user.id === 1) await db.run('UPDATE users SET is_admin = 1 WHERE id = 1');
+      user = { id: result.lastID, username: name, email, is_admin: result.lastID === 1, has_seen_onboarding: false };
+      if (user.id === 1) await db.run('UPDATE users SET is_admin = TRUE WHERE id = 1');
       sendWelcomeEmail(email, name);
     } else {
       await db.run('UPDATE users SET last_login = ? WHERE id = ?', [now, user.id]);
     }
 
-    const token = jwt.sign({ id: user.id, username: user.username, is_admin: user.is_admin === 1 }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user.id, username: user.username, email: user.email, is_admin: user.is_admin === 1, has_seen_onboarding: user.has_seen_onboarding || 0 } });
+    const token = jwt.sign({ id: user.id, username: user.username, is_admin: Boolean(user.is_admin) }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: user.id, username: user.username, email: user.email, is_admin: Boolean(user.is_admin), has_seen_onboarding: Boolean(user.has_seen_onboarding) } });
 
   } catch (error) {
     console.error('Google Auth Error:', error);
@@ -242,6 +239,59 @@ app.get('/api/admin/users', authenticateAdmin, async (req, res) => {
       ORDER BY u.last_login DESC
     `);
     res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/admin/users/:id/role', authenticateAdmin, async (req, res) => {
+  try {
+    const { is_admin } = req.body;
+    const userId = req.params.id;
+    
+    if (userId == req.user.id && !is_admin) {
+      return res.status(400).json({ error: 'Você não pode remover seu próprio acesso de administrador.' });
+    }
+
+    const db = await getDb();
+    await db.run('UPDATE users SET is_admin = ? WHERE id = ?', [Boolean(is_admin), userId]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
+  try {
+    const db = await getDb();
+    
+    const totalUsersRow = await db.get(`SELECT COUNT(*) as count FROM users`);
+    const totalUsers = totalUsersRow.count;
+    
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const activeUsersRow = await db.get(`SELECT COUNT(*) as count FROM users WHERE last_login >= ?`, [sevenDaysAgo.toISOString()]);
+    const activeUsers = activeUsersRow.count;
+    
+    const totalOffersRow = await db.get(`SELECT COUNT(*) as count FROM offers`);
+    const totalOffers = totalOffersRow.count;
+    
+    const topOffers = await db.all(`
+      SELECT o.id, o.name, o.url, u.username, MAX(d.count) as max_count
+      FROM offers o
+      JOIN users u ON o.user_id = u.id
+      JOIN daily_counts d ON o.id = d.offer_id
+      GROUP BY o.id
+      ORDER BY max_count DESC
+      LIMIT 10
+    `);
+    
+    res.json({
+      totalUsers,
+      activeUsers,
+      totalOffers,
+      topOffers
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -315,7 +365,7 @@ app.post('/api/offers', authenticateToken, async (req, res) => {
       [name, url, req.user.id, site_url || null, checkout_url || null, JSON.stringify(tags || []), JSON.stringify(idiomas || [])]
     );
     const newOffer = { id: result.lastID, name, url, user_id: req.user.id };
-    runScraperForOffer(newOffer).catch(console.error);
+    await runScraperForOffer(newOffer).catch(console.error);
     res.status(201).json(newOffer);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -409,25 +459,83 @@ app.get('/api/reports', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/clean-metadata', authenticateToken, upload.single('file'), async (req, res) => {
+  console.log("Recebida requisição para limpar metadados. Arquivo:", req.file ? req.file.originalname : 'Nenhum');
   if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
   
   const originalName = req.file.originalname;
   const ext = path.extname(originalName);
   const inputPath = path.resolve(req.file.path + ext);
   
-  // Renomeia o arquivo temporário para ter a extensão, ajudando o ExifTool
-  fs.renameSync(req.file.path, inputPath);
-  
   try {
-    await exiftool.write(inputPath, { all: '' });
-    res.download(inputPath, `cleaned_${originalName}`, (err) => {
-      if (err) console.error('Error sending file:', err);
-      fs.unlink(inputPath, () => {});
-      if (fs.existsSync(inputPath + '_original')) fs.unlink(inputPath + '_original', () => {});
+    // Renomeia o arquivo temporário para ter a extensão
+    fs.renameSync(req.file.path, inputPath);
+    
+    // Limpa metadados
+    if (ext.toLowerCase() === '.mp4') {
+      const outputPath = inputPath.replace('.mp4', '_cleaned.mp4');
+      await new Promise((resolve, reject) => {
+        ffmpeg(inputPath)
+          .outputOptions([
+            '-map_metadata', '-1',
+            '-c:v', 'copy',
+            '-c:a', 'copy'
+          ])
+          .output(outputPath)
+          .on('end', () => {
+            fs.renameSync(outputPath, inputPath);
+            resolve();
+          })
+          .on('error', (err) => {
+            reject(err);
+          })
+          .run();
+      });
+    } else {
+      await exiftool.write(inputPath, { all: '' });
+    }
+
+    if (!fs.existsSync(inputPath)) {
+      throw new Error("Arquivo não encontrado após processamento.");
+    }
+
+    res.setHeader('Content-Disposition', `attachment; filename="cleaned_${originalName}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    
+    const readStream = fs.createReadStream(inputPath);
+    readStream.pipe(res);
+    
+    readStream.on('end', () => {
+      // Limpa os arquivos
+      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+      if (fs.existsSync(inputPath + '_original')) fs.unlinkSync(inputPath + '_original');
+    });
+
+    readStream.on('error', (err) => {
+      console.error('Error streaming file:', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Erro ao enviar o arquivo.' });
     });
   } catch (error) {
-    console.error('Exiftool error:', error);
+    console.error('Exiftool/Process error:', error);
+    if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: 'Erro ao limpar metadados.' });
+  }
+});
+
+// --- EXTERNAL CRON ROUTE ---
+app.get('/api/cron/run-scraper', async (req, res) => {
+  // Simple auth to prevent abuse
+  const authHeader = req.headers.authorization;
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET || 'meu-segredo-cron-123'}`) {
+    return res.status(401).json({ error: 'Unauthorized cron access' });
+  }
+
+  try {
+    // Run asynchronously without blocking the request
+    runDailyScraper();
+    res.json({ message: 'Scraper job started in the background.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

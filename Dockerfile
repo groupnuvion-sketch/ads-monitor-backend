@@ -1,27 +1,14 @@
-FROM node:20-bullseye
+FROM ghcr.io/puppeteer/puppeteer:latest
 
-# Install dependencies for Playwright/Puppeteer and SQLite3 build
-RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    libnss3 \
-    libxss1 \
-    libasound2 \
-    libgbm1 \
-    libgtk-3-0 \
-    xauth \
-    xvfb \
-    && rm -rf /var/lib/apt/lists/*
-
+USER root
 WORKDIR /app
-
 COPY package*.json ./
-
 RUN npm install
 
 COPY . .
 
-EXPOSE 3001
+# Run as non-root user (provided by puppeteer image)
+USER pptruser
 
+EXPOSE 3001
 CMD ["node", "server.js"]

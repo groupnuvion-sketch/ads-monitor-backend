@@ -1,72 +1,90 @@
-const sqlite3 = require('sqlite3').verbose();
-const { open } = require('sqlite');
-const path = require('path');
+const { Pool } = require('pg');
+require('dotenv').config();
 
-const dbPath = path.resolve(__dirname, 'database.sqlite');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
+
+function replaceParams(sql) {
+  let i = 1;
+  return sql.replace(/\?/g, () => `$${i++}`);
+}
+
+const dbAdapter = {
+  async run(sql, params = []) {
+    let modifiedSql = replaceParams(sql);
+    if (modifiedSql.trim().toUpperCase().startsWith('INSERT') && !modifiedSql.toUpperCase().includes('RETURNING')) {
+      modifiedSql += ' RETURNING id';
+    }
+    const res = await pool.query(modifiedSql, params);
+    const lastID = (res.rows && res.rows[0] && res.rows[0].id) ? res.rows[0].id : null;
+    return { lastID, changes: res.rowCount };
+  },
+  async get(sql, params = []) {
+    const res = await pool.query(replaceParams(sql), params);
+    return res.rows[0];
+  },
+  async all(sql, params = []) {
+    const res = await pool.query(replaceParams(sql), params);
+    return res.rows;
+  },
+  async exec(sql) {
+    return await pool.query(sql);
+  }
+};
 
 async function getDb() {
-  return open({
-    filename: dbPath,
-    driver: sqlite3.Database
-  });
+  return dbAdapter;
 }
 
 async function initDb() {
   const db = await getDb();
   await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      id SERIAL PRIMARY KEY,
+      username VARCHAR(255) UNIQUE NOT NULL,
+      password VARCHAR(255) NOT NULL,
+      email VARCHAR(255) UNIQUE,
+      last_login TIMESTAMP,
+      is_admin BOOLEAN DEFAULT FALSE,
+      has_seen_onboarding BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS offers (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER,
-      name TEXT NOT NULL,
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      name VARCHAR(255) NOT NULL,
       url TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id)
+      site_url TEXT,
+      checkout_url TEXT,
+      tags TEXT,
+      idiomas TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS daily_counts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      offer_id INTEGER NOT NULL,
+      id SERIAL PRIMARY KEY,
+      offer_id INTEGER REFERENCES offers(id) ON DELETE CASCADE,
       count INTEGER NOT NULL,
       date DATE NOT NULL,
-      FOREIGN KEY (offer_id) REFERENCES offers(id),
       UNIQUE(offer_id, date)
     );
 
     CREATE TABLE IF NOT EXISTS password_resets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT NOT NULL,
-      token TEXT NOT NULL,
-      expires_at DATETIME NOT NULL,
-      used BOOLEAN DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      id SERIAL PRIMARY KEY,
+      email VARCHAR(255) NOT NULL,
+      token VARCHAR(255) NOT NULL,
+      expires_at TIMESTAMP NOT NULL,
+      used BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
-  try {
-    await db.exec('ALTER TABLE offers ADD COLUMN user_id INTEGER REFERENCES users(id)');
-  } catch (e) {}
-  
-  try { await db.exec('ALTER TABLE offers ADD COLUMN site_url TEXT'); } catch(e) {}
-  try { await db.exec('ALTER TABLE offers ADD COLUMN checkout_url TEXT'); } catch(e) {}
-  try { await db.exec('ALTER TABLE offers ADD COLUMN tags TEXT'); } catch(e) {}
-  try { await db.exec('ALTER TABLE offers ADD COLUMN idiomas TEXT'); } catch(e) {}
-
-  // Novas colunas na tabela users
-  try { await db.exec('ALTER TABLE users ADD COLUMN email TEXT'); } catch(e) {}
-  try { await db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL'); } catch(e) {}
-  try { await db.exec('ALTER TABLE users ADD COLUMN last_login DATETIME'); } catch(e) {}
-  try { await db.exec('ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0'); } catch(e) {}
-  try { await db.exec('ALTER TABLE users ADD COLUMN has_seen_onboarding BOOLEAN DEFAULT 0'); } catch(e) {}
-  
-  // Transformar o usuário 1 em admin por padrão
-  try { await db.exec('UPDATE users SET is_admin = 1 WHERE id = 1'); } catch(e) {}
+  try { await db.exec("UPDATE users SET is_admin = TRUE WHERE id = 1"); } catch(e) {}
 
   return db;
 }
