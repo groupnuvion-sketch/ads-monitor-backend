@@ -47,7 +47,7 @@ async function runScraperForOffer(offer) {
 
     if (count !== null) {
       const db = await getDb();
-      const today = new Date().toISOString().split('T')[0];
+      const today = new Intl.DateTimeFormat('fr-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
       
       await db.run(`
         INSERT INTO daily_counts (offer_id, count, date) 
