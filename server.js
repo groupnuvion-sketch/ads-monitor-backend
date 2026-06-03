@@ -281,7 +281,7 @@ app.get('/api/admin/stats', authenticateAdmin, async (req, res) => {
       FROM offers o
       JOIN users u ON o.user_id = u.id
       JOIN daily_counts d ON o.id = d.offer_id
-      GROUP BY o.id
+      GROUP BY o.id, o.name, o.url, u.username
       ORDER BY max_count DESC
       LIMIT 10
     `);
