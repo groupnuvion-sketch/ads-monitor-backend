@@ -529,6 +529,201 @@ app.get('/api/cron/run-scraper', async (req, res) => {
   if (authHeader !== `Bearer ${process.env.CRON_SECRET || 'meu-segredo-cron-123'}`) {
     return res.status(401).json({ error: 'Unauthorized cron access' });
   }
+        if (row.latest_count > row.previous_count) trend = 'up';
+        else if (row.latest_count < row.previous_count) trend = 'down';
+        else trend = 'stable';
+      } else if (row.latest_count !== null) trend = 'stable';
+
+      return {
+        ...row,
+        tags: row.tags ? JSON.parse(row.tags) : [],
+        idiomas: row.idiomas ? JSON.parse(row.idiomas) : [],
+        trend,
+        isChampion: row.id === championId && maxCount > 0
+      };
+    });
+
+    res.json(offers);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/offers', authenticateToken, async (req, res) => {
+  const { name, url, site_url, checkout_url, tags, idiomas } = req.body;
+  if (!name || !url) return res.status(400).json({ error: 'Name and URL are required' });
+
+  try {
+    const db = await getDb();
+    const result = await db.run(
+      'INSERT INTO offers (name, url, user_id, site_url, checkout_url, tags, idiomas) VALUES (?, ?, ?, ?, ?, ?, ?)', 
+      [name, url, req.user.id, site_url || null, checkout_url || null, JSON.stringify(tags || []), JSON.stringify(idiomas || [])]
+    );
+    const newOffer = { id: result.lastID, name, url, user_id: req.user.id };
+    // Run scraper in the background without blocking response
+    runScraperForOffer(newOffer).catch(console.error);
+    res.status(201).json(newOffer);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/offers/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { name, url, site_url, checkout_url, tags, idiomas } = req.body;
+  if (!name || !url) return res.status(400).json({ error: 'Name and URL are required' });
+
+  try {
+    const db = await getDb();
+    const offer = await db.get('SELECT id FROM offers WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    if (!offer) return res.status(403).json({ error: 'Unauthorized' });
+
+    await db.run(
+      'UPDATE offers SET name = ?, url = ?, site_url = ?, checkout_url = ?, tags = ?, idiomas = ? WHERE id = ?', 
+      [name, url, site_url || null, checkout_url || null, JSON.stringify(tags || []), JSON.stringify(idiomas || []), id]
+    );
+    res.json({ success: true, id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/offers/:id/history', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const db = await getDb();
+    const offer = await db.get('SELECT id FROM offers WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    if (!offer) return res.status(403).json({ error: 'Unauthorized' });
+
+    const history = await db.all('SELECT date, count FROM daily_counts WHERE offer_id = ? ORDER BY date ASC', [id]);
+    res.json(history);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/offers/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const db = await getDb();
+    const offer = await db.get('SELECT id FROM offers WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    if (!offer) return res.status(403).json({ error: 'Unauthorized' });
+
+    await db.run('DELETE FROM daily_counts WHERE offer_id = ?', [id]);
+    await db.run('DELETE FROM offers WHERE id = ?', [id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/reports', authenticateToken, async (req, res) => {
+  try {
+    const db = await getDb();
+    const offers = await db.all('SELECT * FROM offers WHERE user_id = ?', [req.user.id]);
+    
+    let bestGrowthOffer = null, maxGrowth = -9999;
+    let mostStableOffer = null, minVariance = 9999;
+
+    for (let offer of offers) {
+      const history = await db.all('SELECT count FROM daily_counts WHERE offer_id = ? ORDER BY date ASC', [offer.id]);
+      if (history.length < 2) continue;
+
+      const first = history[0].count;
+      const last = history[history.length - 1].count;
+      const growth = last - first;
+
+      if (growth > maxGrowth) {
+        maxGrowth = growth;
+        bestGrowthOffer = { ...offer, growth, first, last };
+      }
+
+      let totalDiff = 0;
+      for (let i = 1; i < history.length; i++) totalDiff += Math.abs(history[i].count - history[i-1].count);
+      const avgDiff = totalDiff / (history.length - 1);
+      
+      if (avgDiff < minVariance) {
+        minVariance = avgDiff;
+        mostStableOffer = { ...offer, variance: avgDiff };
+      }
+    }
+
+    res.json({ bestGrowth: bestGrowthOffer, mostStable: mostStableOffer });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/clean-metadata', authenticateToken, upload.single('file'), async (req, res) => {
+  console.log("Recebida requisição para limpar metadados. Arquivo:", req.file ? req.file.originalname : 'Nenhum');
+  if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+  
+  const originalName = req.file.originalname;
+  const ext = path.extname(originalName);
+  const inputPath = path.resolve(req.file.path + ext);
+  
+  try {
+    // Renomeia o arquivo temporário para ter a extensão
+    fs.renameSync(req.file.path, inputPath);
+    
+    // Limpa metadados
+    if (ext.toLowerCase() === '.mp4') {
+      const outputPath = inputPath.replace('.mp4', '_cleaned.mp4');
+      await new Promise((resolve, reject) => {
+        ffmpeg(inputPath)
+          .outputOptions([
+            '-map_metadata', '-1',
+            '-c:v', 'copy',
+            '-c:a', 'copy'
+          ])
+          .output(outputPath)
+          .on('end', () => {
+            fs.renameSync(outputPath, inputPath);
+            resolve();
+          })
+          .on('error', (err) => {
+            reject(err);
+          })
+          .run();
+      });
+    } else {
+      await exiftool.write(inputPath, { all: '' });
+    }
+
+    if (!fs.existsSync(inputPath)) {
+      throw new Error("Arquivo não encontrado após processamento.");
+    }
+
+    res.setHeader('Content-Disposition', `attachment; filename="cleaned_${originalName}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    
+    const readStream = fs.createReadStream(inputPath);
+    readStream.pipe(res);
+    
+    readStream.on('end', () => {
+      // Limpa os arquivos
+      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+      if (fs.existsSync(inputPath + '_original')) fs.unlinkSync(inputPath + '_original');
+    });
+
+    readStream.on('error', (err) => {
+      console.error('Error streaming file:', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Erro ao enviar o arquivo.' });
+    });
+  } catch (error) {
+    console.error('Exiftool/Process error:', error);
+    if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    res.status(500).json({ error: 'Erro ao limpar metadados.' });
+  }
+});
+
+// --- EXTERNAL CRON ROUTE (Optional now, but kept for manual triggering) ---
+app.get('/api/cron/run-scraper', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET || 'meu-segredo-cron-123'}`) {
+    return res.status(401).json({ error: 'Unauthorized cron access' });
+  }
 
   runDailyScraper().catch(console.error);
   res.json({ message: 'Daily scraper job started in background' });
@@ -536,10 +731,13 @@ app.get('/api/cron/run-scraper', async (req, res) => {
 
 // --- INTERNAL CRON JOB ---
 const cron = require('node-cron');
-// Roda todos os dias à meia-noite (00:00)
+// Roda todos os dias à meia-noite (00:00) horário de Brasília
 cron.schedule('0 0 * * *', () => {
-  console.log('Internal cron triggered at midnight! Running daily scraper...');
+  console.log('Internal cron triggered at midnight (Brazil time)! Running daily scraper...');
   runDailyScraper().catch(console.error);
+}, {
+  scheduled: true,
+  timezone: "America/Sao_Paulo"
 });
 
 app.listen(PORT, () => {
