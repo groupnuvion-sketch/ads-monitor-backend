@@ -63,6 +63,7 @@ async function initDb() {
       checkout_url TEXT,
       tags TEXT,
       idiomas TEXT,
+      oldest_ad_date DATE,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -83,6 +84,14 @@ async function initDb() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  try {
+    await db.exec('ALTER TABLE offers ADD COLUMN oldest_ad_date DATE;');
+  } catch(e) {}
+
+  try {
+    await db.exec('ALTER TABLE users ADD COLUMN parent_id INTEGER REFERENCES users(id) ON DELETE CASCADE;');
+  } catch(e) {}
 
   try { await db.exec("UPDATE users SET is_admin = TRUE WHERE id = 1"); } catch(e) {}
 
