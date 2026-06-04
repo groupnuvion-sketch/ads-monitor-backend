@@ -109,7 +109,10 @@ async function runScraperForOffer(offer) {
     }, resultObj.text);
 
     const db = await getDb();
-    const today = new Date().toISOString().split('T')[0];
+    const options = { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' };
+    const brDate = new Intl.DateTimeFormat('pt-BR', options).format(new Date());
+    const [day, month, year] = brDate.split('/');
+    const today = `${year}-${month}-${day}`;
     
     // Deleta os counts 50 que eu coloquei manualmente agora pouco
     await db.run('DELETE FROM daily_counts WHERE offer_id = ? AND count = 50 AND date = ?', [offer.id, today]);
