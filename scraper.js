@@ -83,7 +83,7 @@ async function runScraperForOffer(offer) {
         }
         oldestDate = `${year}-${month}-${day.padStart(2, '0')}`;
       } else {
-        const dateMatchEn = text.match(/(?:Started running on)\s*([A-Za-z]+)\s*(\d{1,2}),\s*(\d{4})/i);
+        const dateMatchEn = text.match(/(?:Started running on)\s*([A-Za-z]+)\s*(\d{1,2}),?\s*(\d{4})/i);
         if (dateMatchEn) {
           const monthName = dateMatchEn[1].toLowerCase();
           const day = dateMatchEn[2];
