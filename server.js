@@ -129,8 +129,8 @@ app.post('/api/login', async (req, res) => {
     const now = new Date().toISOString();
     await db.run('UPDATE users SET last_login = ? WHERE id = ?', [now, user.id]);
 
-    const token = jwt.sign({ id: user.id, username: user.username, is_admin: Boolean(user.is_admin) }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user.id, username: user.username, email: user.email, is_admin: Boolean(user.is_admin), has_seen_onboarding: Boolean(user.has_seen_onboarding) } });
+    const token = jwt.sign({ id: user.id, username: user.username, parent_id: user.parent_id, is_admin: Boolean(user.is_admin) }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: user.id, username: user.username, parent_id: user.parent_id, email: user.email, is_admin: Boolean(user.is_admin), has_seen_onboarding: Boolean(user.has_seen_onboarding) } });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -219,8 +219,8 @@ app.post('/api/auth/google', async (req, res) => {
       await db.run('UPDATE users SET last_login = ? WHERE id = ?', [now, user.id]);
     }
 
-    const token = jwt.sign({ id: user.id, username: user.username, is_admin: Boolean(user.is_admin) }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user.id, username: user.username, email: user.email, is_admin: Boolean(user.is_admin), has_seen_onboarding: Boolean(user.has_seen_onboarding) } });
+    const token = jwt.sign({ id: user.id, username: user.username, parent_id: user.parent_id, is_admin: Boolean(user.is_admin) }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ token, user: { id: user.id, username: user.username, parent_id: user.parent_id, email: user.email, is_admin: Boolean(user.is_admin), has_seen_onboarding: Boolean(user.has_seen_onboarding) } });
 
   } catch (error) {
     console.error('Google Auth Error:', error);
