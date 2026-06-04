@@ -320,7 +320,7 @@ app.get('/api/offers', authenticateToken, async (req, res) => {
       FROM offers o
       WHERE o.user_id = ?
       ORDER BY o.created_at DESC
-    `, [req.user.id]);
+    `, [req.user.parent_id || req.user.id]);
     
     let maxCount = -1;
     let championId = null;
