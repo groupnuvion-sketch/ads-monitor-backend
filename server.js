@@ -1,3 +1,4 @@
+const frontendUrl = process.env.FRONTEND_URL || 'https://offertrack.com.br';
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -38,7 +39,7 @@ async function sendWelcomeEmail(email, username) {
           <p>Estamos muito felizes em ter você conosco.</p>
           <p>O OfferTrack é o Radar Definitivo para Direct Response. Com ele, você pode monitorar a longevidade dos anúncios dos seus concorrentes e descobrir quais ofertas são campeãs.</p>
           <div style="text-align: center; margin-top: 30px;">
-            <a href="http://localhost:5173/app" style="background-color: #045DFC; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">Acessar Painel</a>
+            <a href="${frontendUrl}/app" style="background-color: #045DFC; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">Acessar Painel</a>
           </div>
         </div>
       `
@@ -150,7 +151,7 @@ app.post('/api/forgot-password', async (req, res) => {
     
     await db.run('INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?)', [email, token, expiresAt]);
 
-    const resetLink = `http://localhost:5173/reset-password?token=${token}`;
+    const resetLink = `${frontendUrl}/reset-password?token=${token}`;
 
     if (transporter) {
       const info = await transporter.sendMail({
@@ -577,7 +578,7 @@ app.post('/api/team/invite', authenticateToken, async (req, res) => {
         from: '"OfferTrack" <offertrack.sistema@gmail.com>',
         to: email,
         subject: 'Convite de Acesso - OfferTrack',
-        html: '<p>Você foi convidado para acessar uma conta no OfferTrack.</p><p>Seu login: <b>' + email + '</b></p><p>Sua senha: <b>offer12345</b></p><p><a href="http://localhost:5173/login">Clique aqui para acessar o painel</a></p>'
+        html: '<p>Você foi convidado para acessar uma conta no OfferTrack.</p><p>Seu login: <b>' + email + '</b></p><p>Sua senha: <b>offer12345</b></p><p><a href="' + frontendUrl + '/login">Clique aqui para acessar o painel</a></p>'
       });
     }
 
